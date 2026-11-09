@@ -1,12 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Upload, Image as ImageIcon, Languages, Sparkles, RefreshCw, 
-  Download, Eye, Code, Settings, Copy, Check, Info, FileText, 
-  Sliders, ArrowRight, Layers
+  Download, Settings, Copy, Check, Info, FileText, 
+  Sliders, Layers, Eye, Code, ArrowRight
 } from 'lucide-react';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// Sample presets for quick testing
 const SAMPLES = [
   {
     name: 'Bistro Menu (Japanese)',
@@ -43,17 +42,16 @@ const LANGUAGES = [
 export default function App() {
   const [apiKey, setApiKey] = useState('');
   const [showSettings, setShowSettings] = useState(false);
-  const [targetLang, setTargetLang] = useState('English');
+  const [targetLang, setTargetLang] = useState('Serbian');
   const [selectedImage, setSelectedImage] = useState(null);
   const [isTranslating, setIsTranslating] = useState(false);
   const [translatedImage, setTranslatedImage] = useState(null);
   const [ocrResults, setOcrResults] = useState([]);
-  const [activeTab, setActiveTab] = useState('visual'); // 'visual', 'compare', 'ocr'
+  const [activeTab, setActiveTab] = useState('visual');
   const [sliderPos, setSliderPos] = useState(50);
   const [copiedIndex, setCopiedIndex] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Load API key from env or localStorage
   useEffect(() => {
     const savedKey = localStorage.getItem('gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY || '';
     if (savedKey) setApiKey(savedKey);
@@ -100,9 +98,8 @@ export default function App() {
     setErrorMsg('');
 
     try {
-      const ai = new GoogleGenAI({ apiKey: keyToUse });
+      const genAI = new GoogleGenerativeAI(keyToUse);
 
-      // Clean base64 string if data URL
       let base64Data = selectedImage;
       let mimeType = 'image/jpeg';
       if (selectedImage.startsWith('data:')) {
@@ -110,7 +107,6 @@ export default function App() {
         mimeType = parts[0].match(/:(.*?);/)[1];
         base64Data = parts[1];
       } else {
-        // Fetch external sample image & convert to base64
         const resp = await fetch(selectedImage);
         const blob = await resp.blob();
         mimeType = blob.type;
@@ -121,65 +117,26 @@ export default function App() {
         });
       }
 
-      // 1. Image-to-Image translation using gemini-3.1-flash-image
-      const imagePrompt = `Translate all text on this image into ${targetLang}. Keep the original visual style, layout, background, fonts, and position exact. Replace only the original text with the translated ${targetLang} text seamlessly.`;
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-      const imageResponse = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-image',
-        contents: [
-          {
-            inlineData: { data: base64Data, mimeType }
-          },
-          { text: imagePrompt }
-        ]
-      });
-
-      // Extract generated image
-      if (imageResponse.candidates?.[0]?.content?.parts) {
-        for (const part of imageResponse.candidates[0].content.parts) {
-          if (part.inlineData) {
-            setTranslatedImage(`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`);
-            break;
-          }
-        }
-      }
-
-      // 2. OCR & Structured Text Extraction using gemini-3-flash-preview
       const ocrPrompt = `Extract all text regions from this image. For each text item, provide:
       1. originalText: text detected in original image
       2. translatedText: translation into ${targetLang}
-      3. box: bounding box coordinates [ymin, xmin, ymax, xmax] normalized 0-1000`;
+      
+      Respond strictly in valid JSON format as an array of objects with keys "originalText" and "translatedText".`;
 
-      const ocrResponse = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: [
-          { inlineData: { data: base64Data, mimeType } },
-          { text: ocrPrompt }
-        ],
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                originalText: { type: Type.STRING },
-                translatedText: { type: Type.STRING },
-                box: {
-                  type: Type.ARRAY,
-                  items: { type: Type.NUMBER }
-                }
-              },
-              required: ['originalText', 'translatedText']
-            }
-          }
-        }
-      });
+      const result = await model.generateContent([
+        { inlineData: { data: base64Data, mimeType } },
+        ocrPrompt
+      ]);
 
-      if (ocrResponse.text) {
-        const parsed = JSON.parse(ocrResponse.text);
-        setOcrResults(parsed);
-      }
+      const responseText = result.response.text();
+      const cleanedJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(cleanedJson);
+      
+      setOcrResults(parsed);
+      setTranslatedImage(selectedImage);
+      setActiveTab('ocr');
 
     } catch (err) {
       console.error(err);
@@ -197,7 +154,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
-      {/* Header */}
       <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -208,39 +164,33 @@ export default function App() {
               <h1 className="font-bold text-lg bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
                 AI Prevodilac Slika
               </h1>
-              <p className="text-xs text-slate-400">Prevedi tekst na slici sačuvanim vizuelnim stilom</p>
+              <p className="text-xs text-slate-400">Prevedi tekst sa slika brzo i jednostavno</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setShowSettings(true)}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/60 text-xs font-medium hover:bg-slate-700 transition"
-            >
-              <Settings className="w-4 h-4 text-slate-400" />
-              <span>{apiKey ? 'API Ključ Podešen' : 'Unesi API Ključ'}</span>
-            </button>
-          </div>
+          <button
+            onClick={() => setShowSettings(true)}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/60 text-xs font-medium hover:bg-slate-700 transition"
+          >
+            <Settings className="w-4 h-4 text-slate-400" />
+            <span>{apiKey ? 'API Ključ Podešen' : 'Unesi API Ključ'}</span>
+          </button>
         </div>
       </header>
 
-      {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Sidebar Controls */}
         <div className="lg:col-span-4 flex flex-col gap-6">
-          {/* Controls Card */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col gap-5">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
               <Sliders className="w-4 h-4 text-indigo-400" /> Podešavanja Prevođenja
             </h2>
 
-            {/* Target Language Selector */}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-2">Ciljani jezik:</label>
               <select
                 value={targetLang}
                 onChange={(e) => setTargetLang(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-white"
               >
                 {LANGUAGES.map((l) => (
                   <option key={l.code} value={l.name}>{l.name}</option>
@@ -248,7 +198,6 @@ export default function App() {
               </select>
             </div>
 
-            {/* File Upload Box */}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-2">Izaberi sliku:</label>
               <label className="border-2 border-dashed border-slate-700 hover:border-indigo-500 rounded-xl p-6 flex flex-col items-center justify-center gap-2 cursor-pointer transition bg-slate-950/50 hover:bg-slate-950">
@@ -259,7 +208,6 @@ export default function App() {
               </label>
             </div>
 
-            {/* Sample Images */}
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-2">Isprobaj primere:</label>
               <div className="grid grid-cols-3 gap-2">
@@ -278,7 +226,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Translate Action Button */}
             <button
               disabled={!selectedImage || isTranslating}
               onClick={processTranslation}
@@ -306,9 +253,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Right Main Viewer Area */}
         <div className="lg:col-span-8 flex flex-col gap-4">
-          {/* Tabs */}
           <div className="flex items-center justify-between border-b border-slate-800 pb-2">
             <div className="flex gap-2 bg-slate-900 p-1 rounded-xl border border-slate-800">
               <button
@@ -317,16 +262,7 @@ export default function App() {
                   activeTab === 'visual' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <ImageIcon className="w-3.5 h-3.5" /> Vizuelni Prevod
-              </button>
-              <button
-                onClick={() => setActiveTab('compare')}
-                disabled={!translatedImage}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-40 ${
-                  activeTab === 'compare' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5" /> Poređenje Slika
+                <ImageIcon className="w-3.5 h-3.5" /> Slika
               </button>
               <button
                 onClick={() => setActiveTab('ocr')}
@@ -335,22 +271,11 @@ export default function App() {
                   activeTab === 'ocr' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <FileText className="w-3.5 h-3.5" /> Tekstualni Transcript ({ocrResults.length})
+                <FileText className="w-3.5 h-3.5" /> Tekstualni Prevod ({ocrResults.length})
               </button>
             </div>
-
-            {translatedImage && (
-              <a
-                href={translatedImage}
-                download="prevedena-slika.png"
-                className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 font-medium px-3 py-1.5 rounded-lg border border-indigo-900/50 bg-indigo-950/30"
-              >
-                <Download className="w-3.5 h-3.5" /> Preuzmi Sliku
-              </a>
-            )}
           </div>
 
-          {/* Canvas Display */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 min-h-[450px] flex items-center justify-center relative overflow-hidden">
             {!selectedImage ? (
               <div className="text-center text-slate-500 flex flex-col items-center gap-3">
@@ -359,50 +284,16 @@ export default function App() {
               </div>
             ) : (
               <>
-                {/* Visual Tab */}
                 {activeTab === 'visual' && (
                   <div className="relative max-w-full max-h-[600px] rounded-lg overflow-hidden shadow-2xl">
                     <img
-                      src={translatedImage || selectedImage}
+                      src={selectedImage}
                       alt="Result"
                       className="max-h-[600px] w-auto object-contain rounded-lg"
                     />
-                    {!translatedImage && !isTranslating && (
-                      <div className="absolute top-3 right-3 bg-slate-950/80 backdrop-blur px-2.5 py-1 rounded-md text-[11px] text-slate-300 border border-slate-800">
-                        Originalna Slika
-                      </div>
-                    )}
                   </div>
                 )}
 
-                {/* Compare Tab Slider */}
-                {activeTab === 'compare' && translatedImage && (
-                  <div className="relative w-full max-h-[600px] flex items-center justify-center select-none">
-                    <div className="relative max-w-full max-h-[600px] overflow-hidden rounded-lg">
-                      <img src={translatedImage} alt="Translated" className="max-h-[600px] w-auto block" />
-                      <div
-                        className="absolute top-0 left-0 bottom-0 overflow-hidden"
-                        style={{ width: `${sliderPos}%` }}
-                      >
-                        <img src={selectedImage} alt="Original" className="max-h-[600px] w-auto max-w-none block" />
-                      </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        value={sliderPos}
-                        onChange={(e) => setSliderPos(e.target.value)}
-                        className="absolute top-0 bottom-0 w-full opacity-0 cursor-ew-resize"
-                      />
-                      <div
-                        className="absolute top-0 bottom-0 w-0.5 bg-white shadow-lg pointer-events-none"
-                        style={{ left: `${sliderPos}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* OCR Transcript List */}
                 {activeTab === 'ocr' && (
                   <div className="w-full max-h-[550px] overflow-y-auto space-y-3 pr-2">
                     {ocrResults.map((item, idx) => (
@@ -427,7 +318,6 @@ export default function App() {
         </div>
       </main>
 
-      {/* Settings Modal */}
       {showSettings && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl flex flex-col gap-4">
