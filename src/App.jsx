@@ -48,7 +48,6 @@ export default function App() {
   const [translatedImage, setTranslatedImage] = useState(null);
   const [ocrResults, setOcrResults] = useState([]);
   const [activeTab, setActiveTab] = useState('visual');
-  const [sliderPos, setSliderPos] = useState(50);
   const [copiedIndex, setCopiedIndex] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -117,13 +116,14 @@ export default function App() {
         });
       }
 
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      // Koristimo trenutni podržani model
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
       const ocrPrompt = `Extract all text regions from this image. For each text item, provide:
       1. originalText: text detected in original image
       2. translatedText: translation into ${targetLang}
       
-      Respond strictly in valid JSON format as an array of objects with keys "originalText" and "translatedText".`;
+      Respond strictly in valid JSON format as an array of objects with keys "originalText" and "translatedText". Do not wrap in markdown quotes if possible or send clean array.`;
 
       const result = await model.generateContent([
         { inlineData: { data: base64Data, mimeType } },
