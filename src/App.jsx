@@ -116,8 +116,8 @@ export default function App() {
         });
       }
 
-      // Koristimo trenutni podržani model
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      // Koristimo tačan naziv modela koji je zahtevao tvoj API
+      const model = genAI.getGenerativeModel({ model: 'gemini-3.8-flash' });
 
       const ocrPrompt = `Extract all text regions from this image. For each text item, provide:
       1. originalText: text detected in original image
