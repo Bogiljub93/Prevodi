@@ -1,24 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Upload, Image as ImageIcon, Languages, Sparkles, RefreshCw, 
-  Download, Settings, Copy, Check, Info, FileText, Sliders
+  Download, Settings, Info, Sliders 
 } from 'lucide-react';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const SAMPLES = [
   {
     name: 'Bistro Menu (Japanese)',
-    lang: 'Japanese to English',
     url: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80',
   },
   {
     name: 'Street Sign (German)',
-    lang: 'German to English',
     url: 'https://images.unsplash.com/photo-1563245372-f21724e3856d?auto=format&fit=crop&w=800&q=80',
   },
   {
     name: 'Product Label (French)',
-    lang: 'French to English',
     url: 'https://images.unsplash.com/photo-1527661591475-527312dd65f5?auto=format&fit=crop&w=800&q=80',
   }
 ];
@@ -42,8 +39,6 @@ export default function App() {
   const [selectedImage, setSelectedImage] = useState(null);
   const [isTranslating, setIsTranslating] = useState(false);
   const [translatedImageUrl, setTranslatedImageUrl] = useState(null);
-  const [ocrResults, setOcrResults] = useState([]);
-  const [copiedIndex, setCopiedIndex] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
 
   const canvasRef = useRef(null);
@@ -66,7 +61,6 @@ export default function App() {
       reader.onload = () => {
         setSelectedImage(reader.result);
         setTranslatedImageUrl(null);
-        setOcrResults([]);
         setErrorMsg('');
       };
       reader.readAsDataURL(file);
@@ -76,11 +70,68 @@ export default function App() {
   const selectSample = (sampleUrl) => {
     setSelectedImage(sampleUrl);
     setTranslatedImageUrl(null);
-    setOcrResults([]);
     setErrorMsg('');
   };
 
-  // Funkcija za iscrtavanje izmenjene slike na Canvas-u sa prevedenim tekstom
+  // Pomoćna funkcija za crtanje teksta sa prelamanjem (word-wrap) i lepom pozadinom
+  const drawHighQualityText = (ctx, text, x, y, w, h, bgColor, textColor) => {
+    const padding = 6;
+    const boxX = x - padding;
+    const boxY = y - padding;
+    const boxW = w + padding * 2;
+    const boxH = h + padding * 2;
+
+    // 1. Nacrtaj pozadinski pravougaonik sa blago zaobljenim ivicama
+    ctx.fillStyle = bgColor || 'rgba(0, 0, 0, 0.65)';
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(boxX, boxY, boxW, boxH, 6);
+    } else {
+      ctx.rect(boxX, boxY, boxW, boxH);
+    }
+    ctx.fill();
+
+    // 2. Odredi optimalnu veličinu fonta
+    let fontSize = Math.max(14, Math.floor(h * 0.45));
+    ctx.font = `600 ${fontSize}px Inter, system-ui, -apple-system, sans-serif`;
+    ctx.fillStyle = textColor || '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Razbijanje teksta u reči za wrap
+    const words = text.split(' ');
+    let lines = [];
+    let currentLine = words[0] || '';
+
+    for (let i = 1; i < words.length; i++) {
+      const testLine = currentLine + ' ' + words[i];
+      const metrics = ctx.measureText(testLine);
+      if (metrics.width > w && currentLine !== '') {
+        lines.push(currentLine);
+        currentLine = words[i];
+      } else {
+        currentLine = testLine;
+      }
+    }
+    lines.push(currentLine);
+
+    // Ako tekst ne staje, smanji font
+    if (lines.length * (fontSize * 1.2) > h) {
+      fontSize = Math.max(12, Math.floor(h / (lines.length * 1.3)));
+      ctx.font = `600 ${fontSize}px Inter, system-ui, -apple-system, sans-serif`;
+    }
+
+    // 3. Iscrtaj linije teksta centrirano
+    const lineHeight = fontSize * 1.25;
+    const totalTextHeight = lines.length * lineHeight;
+    let startY = y + (h / 2) - (totalTextHeight / 2) + (lineHeight / 2);
+
+    lines.forEach((line) => {
+      ctx.fillText(line, x + (w / 2), startY);
+      startY += lineHeight;
+    });
+  };
+
   const renderTranslatedCanvas = (imgSrc, regions) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -91,10 +142,10 @@ export default function App() {
       canvas.height = img.naturalHeight;
       const ctx = canvas.getContext('2d');
 
-      // 1. Nacrtaj originalnu sliku
+      // Nacrtaj originalnu sliku visokog kvaliteta
       ctx.drawImage(img, 0, 0);
 
-      // 2. Prekrij i iscrtaj tekst za svaku detektovanu regiju
+      // Iscrtaj svaki prevedeni region
       regions.forEach((item) => {
         if (item.box && item.box.length === 4) {
           const [ymin, xmin, ymax, xmax] = item.box;
@@ -103,20 +154,10 @@ export default function App() {
           const w = ((xmax - xmin) / 1000) * canvas.width;
           const h = ((ymax - ymin) / 1000) * canvas.height;
 
-          // Popuni pozadinu gde je bio stari tekst
-          ctx.fillStyle = item.bgColor || 'rgba(0, 0, 0, 0.75)';
-          ctx.fillRect(x - 2, y - 2, w + 4, h + 4);
-
-          // Iscrtaj nov tekst
-          ctx.fillStyle = item.textColor || '#ffffff';
-          const fontSize = Math.max(12, Math.floor(h * 0.7));
-          ctx.font = `bold ${fontSize}px sans-serif`;
-          ctx.textBaseline = 'middle';
-          ctx.fillText(item.translatedText, x + 4, y + h / 2, w - 8);
+          drawHighQualityText(ctx, item.translatedText, x, y, w, h, item.bgColor, item.textColor);
         }
       });
 
-      // Generiši sliku za preuzimanje
       setTranslatedImageUrl(canvas.toDataURL('image/png'));
     };
   };
@@ -156,15 +197,15 @@ export default function App() {
 
       const model = genAI.getGenerativeModel({ model: 'gemini-3.8-flash' });
 
-      const ocrPrompt = `Extract all text regions from this image for image-to-image translation.
+      const ocrPrompt = `Extract all text regions from this image for clean overlay replacement.
       For each text region, detect:
-      1. originalText: text detected in original image
-      2. translatedText: translated text into ${targetLang}
-      3. box: bounding box normalized 0 to 1000 as array [ymin, xmin, ymax, xmax]
-      4. bgColor: dominant background hex color (e.g. "#ffffff" or "#000000")
-      5. textColor: text hex color (e.g. "#000000" or "#ffffff")
+      1. originalText: detected original text
+      2. translatedText: high quality natural translation into ${targetLang}
+      3. box: accurate bounding box normalized 0 to 1000 as array [ymin, xmin, ymax, xmax]
+      4. bgColor: background hex color to cover original text (e.g. "#1e1e1e" or "#ffffff")
+      5. textColor: contrasting clear text color (e.g. "#ffffff" or "#000000")
 
-      Respond strictly as a JSON array of objects with keys: "originalText", "translatedText", "box", "bgColor", "textColor". No markdown block.`;
+      Respond strictly as a JSON array of objects with keys: "originalText", "translatedText", "box", "bgColor", "textColor". No markdown quotes.`;
 
       const result = await model.generateContent([
         { inlineData: { data: base64Data, mimeType } },
@@ -175,7 +216,6 @@ export default function App() {
       const cleanedJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsed = JSON.parse(cleanedJson);
       
-      setOcrResults(parsed);
       renderTranslatedCanvas(selectedImage, parsed);
 
     } catch (err) {
@@ -206,7 +246,7 @@ export default function App() {
               <h1 className="font-bold text-lg bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
                 AI Vizuelni Prevodilac Slika
               </h1>
-              <p className="text-xs text-slate-400">Prevedi tekst i preuzmi novu sliku</p>
+              <p className="text-xs text-slate-400">Prevedi tekst i preuzmi novu sliku visokog kvaliteta</p>
             </div>
           </div>
 
@@ -221,7 +261,6 @@ export default function App() {
       </header>
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Kontrole */}
         <div className="lg:col-span-4 flex flex-col gap-6">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col gap-5">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
@@ -274,7 +313,7 @@ export default function App() {
               {isTranslating ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Generisanje Prevedene Slike...</span>
+                  <span>Obrada i renderovanje...</span>
                 </>
               ) : (
                 <>
@@ -293,7 +332,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Prikaz i Preuzimanje */}
         <div className="lg:col-span-8 flex flex-col gap-4">
           <div className="flex items-center justify-between border-b border-slate-800 pb-2">
             <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
